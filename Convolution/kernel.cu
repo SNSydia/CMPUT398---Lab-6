@@ -14,107 +14,43 @@
 
 #define Mask_width 5
 #define Mask_radius Mask_width / 2
+#define w (TILE_WIDTH + Mask_width - 1)
 #define clamp(x) (min(max((x), 0.0), 1.0))
 #define TILE_WIDTH 16
 
-__global__ void convolution__simple(float *I, const float *M,
-	float *P, int channels, int width, int height) {
-	//TODO: INSERT CODE HERE
 
-	int wid = TILE_WIDTH + Mask_width - 1;
-	int k, x, y;
-	int dest, destY, destX, src, srcX, srcY;
-	float sum = 0;
-
-    __shared__ float N_ds[wid][wid];
-
-   //Loading into shared emory
-   for (k = 0; k < channels; k++) {
-         dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
-         destY = dest / wid, destX = dest % wid;
-         srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
-         srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
-         src = (srcY * width + srcX) * channels + k;
-      if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-         N_ds[destY][destX] = I[src];
-      else
-         N_ds[destY][destX] = 0;
-
-
-      dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
-      destY = dest / wid, destX = dest % wid;
-      srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
-      srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
-      src = (srcY * width + srcX) * channels + k;
-      if (destY < wid) {
-         if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-            N_ds[destY][destX] = I[src];
-         else
-            N_ds[destY][destX] = 0;
-      }
-
-      __syncthreads();
-
-      for (y = 0; y < Mask_width; y++)
-         for (x = 0; x < Mask_width; x++)
-            sum += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * Mask_width + x];
-      y = blockIdx.y * TILE_WIDTH + threadIdx.y;
-      x = blockIdx.x * TILE_WIDTH + threadIdx.x;
-      if (y < height && x < width)
-         P[(y * width + x) * channels + k] = clamp(sum);
-
-      __syncthreads();
-    }
-}
 
 __global__ void convolution(float *I, const float *M,
 	float *P, int channels, int width, int height) {
-	//TODO: INSERT CODE HERE
 
-	int wid = TILE_WIDTH + Mask_width - 1;
-	int k, x, y;
-	int dest, destY, destX, src, srcX, srcY;
+	int col = blockIdx.x * blockDim.x + threadIdx.x; 
+	int row = blockIdx.y * blockDim.y + threadIdx.y; 
+	
 	float sum = 0;
 
-    __shared__ float N_ds[wid][wid];
+	if (row < height && col < width ){ 
+		for (int i = 0; i < channels; i++){
+			
+			int startY = col + Mask_radius;
+			int startX = row + Mask_radius;
 
-   //Loading into shared emory
-   for (k = 0; k < channels; k++) {
-         dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
-         destY = dest / wid, destX = dest % wid;
-         srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
-         srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
-         src = (srcY * width + srcX) * channels + k;
-      if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-         N_ds[destY][destX] = I[src];
-      else
-         N_ds[destY][destX] = 0;
+			for (int j = 0; j < Mask_width; j++){ 
+				for (int k = 0; k < Mask_width; k++){ 
 
+					int x = startX - j;
+					int y = startY - k;
 
-      dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
-      destY = dest / wid, destX = dest % wid;
-      srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
-      srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
-      src = (srcY * width + srcX) * channels + k;
-      if (destY < wid) {
-         if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
-            N_ds[destY][destX] = I[src];
-         else
-            N_ds[destY][destX] = 0;
-      }
+					if (y >= -1 && y < width && x >= -1 && x < height){
+						float pixel = I[(x * width + y) * channels + i];
+						float mask = M[j * Mask_width + k];
+						sum += pixel * mask;
 
-      __syncthreads();
-
-      for (y = 0; y < Mask_width; y++)
-         for (x = 0; x < Mask_width; x++)
-            sum += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * Mask_width + x];
-      y = blockIdx.y * TILE_WIDTH + threadIdx.y;
-      x = blockIdx.x * TILE_WIDTH + threadIdx.x;
-      if (y < height && x < width)
-         P[(y * width + x) * channels + k] = clamp(sum);
-
-      __syncthreads();
-    }
+					}
+				}
+			}
+			P[(row*width + col) * channels + i] = clamp(sum);
+		}
+	}
 }
 
 int main(int argc, char *argv[]) {
