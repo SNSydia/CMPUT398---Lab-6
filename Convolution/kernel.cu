@@ -15,28 +15,32 @@
 #define Mask_width 5
 #define Mask_radius Mask_width / 2
 #define clamp(x) (min(max((x), 0.0), 1.0))
+#define TILE_WIDTH 16
 
-__global__ void convolution(float *I, const float *M,
+__global__ void convolution__simple(float *I, const float *M,
 	float *P, int channels, int width, int height) {
 	//TODO: INSERT CODE HERE
 
 	int wid = TILE_WIDTH + Mask_width - 1;
+	int k, x, y;
+	int dest, destY, destX, src, srcX, srcY;
+	float sum = 0;
 
-	   __shared__ float N_ds[wid][wid];
-   int k;
+    __shared__ float N_ds[wid][wid];
+
+   //Loading into shared emory
    for (k = 0; k < channels; k++) {
-      // First batch loading
-      int dest = threadIdx.y * TILE_WIDTH + threadIdx.x,
-         destY = dest / wid, destX = dest % wid,
-         srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius,
-         srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius,
+         dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
+         destY = dest / wid, destX = dest % wid;
+         srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
+         srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
          src = (srcY * width + srcX) * channels + k;
       if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
          N_ds[destY][destX] = I[src];
       else
          N_ds[destY][destX] = 0;
 
-      // Second batch loading
+
       dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
       destY = dest / wid, destX = dest % wid;
       srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
@@ -48,17 +52,67 @@ __global__ void convolution(float *I, const float *M,
          else
             N_ds[destY][destX] = 0;
       }
+
       __syncthreads();
 
-      float accum = 0;
-      int y, x;
       for (y = 0; y < Mask_width; y++)
          for (x = 0; x < Mask_width; x++)
-            accum += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * Mask_width + x];
+            sum += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * Mask_width + x];
       y = blockIdx.y * TILE_WIDTH + threadIdx.y;
       x = blockIdx.x * TILE_WIDTH + threadIdx.x;
       if (y < height && x < width)
-         P[(y * width + x) * channels + k] = clamp(accum);
+         P[(y * width + x) * channels + k] = clamp(sum);
+
+      __syncthreads();
+    }
+}
+
+__global__ void convolution(float *I, const float *M,
+	float *P, int channels, int width, int height) {
+	//TODO: INSERT CODE HERE
+
+	int wid = TILE_WIDTH + Mask_width - 1;
+	int k, x, y;
+	int dest, destY, destX, src, srcX, srcY;
+	float sum = 0;
+
+    __shared__ float N_ds[wid][wid];
+
+   //Loading into shared emory
+   for (k = 0; k < channels; k++) {
+         dest = threadIdx.y * TILE_WIDTH + threadIdx.x;
+         destY = dest / wid, destX = dest % wid;
+         srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
+         srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
+         src = (srcY * width + srcX) * channels + k;
+      if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+         N_ds[destY][destX] = I[src];
+      else
+         N_ds[destY][destX] = 0;
+
+
+      dest = threadIdx.y * TILE_WIDTH + threadIdx.x + TILE_WIDTH * TILE_WIDTH;
+      destY = dest / wid, destX = dest % wid;
+      srcY = blockIdx.y * TILE_WIDTH + destY - Mask_radius;
+      srcX = blockIdx.x * TILE_WIDTH + destX - Mask_radius;
+      src = (srcY * width + srcX) * channels + k;
+      if (destY < wid) {
+         if (srcY >= 0 && srcY < height && srcX >= 0 && srcX < width)
+            N_ds[destY][destX] = I[src];
+         else
+            N_ds[destY][destX] = 0;
+      }
+
+      __syncthreads();
+
+      for (y = 0; y < Mask_width; y++)
+         for (x = 0; x < Mask_width; x++)
+            sum += N_ds[threadIdx.y + y][threadIdx.x + x] * M[y * Mask_width + x];
+      y = blockIdx.y * TILE_WIDTH + threadIdx.y;
+      x = blockIdx.x * TILE_WIDTH + threadIdx.x;
+      if (y < height && x < width)
+         P[(y * width + x) * channels + k] = clamp(sum);
+
       __syncthreads();
     }
 }
